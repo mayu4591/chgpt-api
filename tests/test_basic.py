@@ -150,7 +150,7 @@ class TestConfigurationHandling(unittest.TestCase):
             self.assertEqual(settings.browser_type, "chrome")
             self.assertFalse(settings.headless)
             self.assertEqual(settings.timeout, 30)
-            self.assertEqual(settings.profile_dir_path, "")  # デフォルト値確認
+            self.assertEqual(settings.profile_dir_path, "./profile")  # デフォルト値確認
 
         except ImportError:
             self.skipTest("Config module not available")

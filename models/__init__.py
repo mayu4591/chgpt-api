@@ -58,6 +58,13 @@ class ChatCompletionRequest(BaseModel):
     # Tools API (新しい方式)
     tools: Optional[List[ToolDefinition]] = None
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    # 追加パラメータ
+    stop: Optional[Union[str, List[str]]] = None
+    presence_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = 0.0
+    logit_bias: Optional[Dict[str, float]] = None
+    user: Optional[str] = None
+    n: Optional[int] = 1
 
 
 class ChatCompletionChoice(BaseModel):
@@ -102,3 +109,18 @@ class HealthResponse(BaseModel):
     """ヘルスチェックレスポンスモデル"""
     status: str
     timestamp: int
+
+
+class ChatCompletionChunk(BaseModel):
+    """ストリーミング用チャット補完チャンクモデル"""
+    id: str
+    object: str = "chat.completion.chunk"
+    created: int
+    model: str
+    choices: List[Dict[str, Any]]
+
+
+class StreamingResponse(BaseModel):
+    """ストリーミングレスポンス管理モデル"""
+    content: str
+    chunk_size: int = 20  # 文字単位でのチャンクサイズ

@@ -26,10 +26,56 @@ pip install -r requirements.txt
 
 ## 使用方法
 
+### 事前準備（重要）
+
+**このAPIを使用する前に、必ずChatGPTにログインしてください。**
+
+1. ブラウザでhttps://chat.openai.com にアクセス
+2. OpenAIアカウントでログイン
+3. ChatGPTの画面が正常に表示されることを確認
+4. **最低でも一度は手動でChatGPTとの会話を行い、正常に動作することを確認してください**
+
+**ログイン状態の重要性:**
+- ログインが完了していない状態でAPIを呼び出すと、HTTP 401エラーが返されます
+- ログインしていない場合、ChatGPTの応答要素が存在せず、フッター部分のテキストが返される可能性があります
+- セッション期限切れの場合も同様の問題が発生する可能性があります
+
+**トラブルシューティング:**
+- API応答が「ChatGPT の回答は必ずしも正しいとは限りません...」のようなフッターテキストの場合、再ログインが必要です
+- Chrome の開発者モードでhttps://chat.openai.com にアクセスし、正常にログインできることを事前に確認してください
+
 ### 基本的な起動
 
 ```bash
 python main.py
+```
+
+### ブラウザ自動起動機能
+
+**バージョン2.0から追加**: アプリケーション起動時に自動的にChromeブラウザを起動し、ChatGPT画面を開く機能が追加されました。
+
+**デフォルト動作**:
+- アプリケーション起動時に自動的にChromeブラウザが起動します
+- ChatGPT (https://chat.openai.com) が自動的に開かれます
+- ブラウザ起動に失敗してもサーバーは正常に起動します
+
+**設定による制御**:
+`.env`ファイルまたは環境変数で制御可能です：
+
+```bash
+# ブラウザ自動起動を無効化
+AUTO_START_BROWSER=false
+
+# 起動タイムアウト時間を変更（デフォルト30秒）
+STARTUP_TIMEOUT=60
+```
+
+**起動ログ例**:
+```
+INFO: Starting ChatGPT Selenium API Server
+INFO: Auto-starting browser session...
+INFO: Browser session started successfully on startup
+INFO: Application startup completed with browser session ready
 ```
 
 **重要**: Chromeブラウザは最初のAPI呼び出し時に自動的に起動されます。起動後はバックグラウンドで動作し、リモートデバッグモードで制御されます。
@@ -287,6 +333,39 @@ else:
 - ChatGPTのWebインターフェースの変更により動作しなくなる可能性があります
 - ブラウザの自動化検知により制限される場合があります
 - 長時間の利用時はセッション管理に注意してください
+
+### サポートされていない機能
+#### ストリーミング (Streaming) ✅ **対応済み**
+- **現在サポート**: `stream` パラメータが利用可能になりました
+- `stream: true` を指定すると、チャンク形式でレスポンスが返されます
+- **実装方式**: 簡易ストリーミング（完全なレスポンス取得後の分割配信）
+
+**使用例（ストリーミング）:**
+```json
+{
+  "model": "gpt-3.5-turbo",
+  "messages": [{"role": "user", "content": "こんにちは"}],
+  "stream": true
+}
+```
+
+**ストリーミングレスポンス形式:**
+```
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1677652288,"model":"gpt-3.5-turbo","choices":[{"index":0,"delta":{"content":"こんにちは"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1677652288,"model":"gpt-3.5-turbo","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+**非ストリーミング（従来通り）:**
+```json
+{
+  "model": "gpt-3.5-turbo",
+  "messages": [{"role": "user", "content": "こんにちは"}],
+  "stream": false
+}
+```
 
 ### Function Calling に関する制限事項
 - **重要**: このツールはChatGPTのブラウザ版を使用するため、OpenAI APIのようなネイティブFunction Callingはサポートされていません

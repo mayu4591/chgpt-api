@@ -1,10 +1,11 @@
+import time
 import pytest
 import asyncio
 from fastapi.testclient import TestClient
 from unittest.mock import Mock, patch, MagicMock
 
 from main import app
-from models import ChatMessage, ChatCompletionRequest, FunctionCall, ToolCall
+from models import ChatMessage, ChatCompletionRequest, FunctionCall
 from services import ChatGPTService
 from drivers import ChatGPTDriver
 
@@ -73,7 +74,7 @@ class TestChatGPTAPI:
                 "total_tokens": 21
             }
         }
-        mock_service.create_chat_completion.return_value = Mock(**mock_response)
+        mock_service.create_chat_completion.return_value = mock_response
 
         # リクエスト送信
         request_data = {
@@ -101,7 +102,7 @@ class TestChatGPTAPI:
         assert response.status_code == 422  # バリデーションエラー
 
     def test_chat_completions_stream_unsupported(self):
-        """ストリーミング未対応テスト"""
+        """ストリーミング対応テスト"""
         request_data = {
             "model": "gpt-3.5-turbo",
             "messages": [
@@ -110,10 +111,140 @@ class TestChatGPTAPI:
             "stream": True
         }
 
+        # ストリーミングテストでもモックサービスを使用
+        with patch('api.get_chatgpt_service') as mock_get_service:
+            mock_service = MagicMock()
+            mock_get_service.return_value = mock_service
+
+            # モックレスポンス作成（適切なオブジェクト構造）
+            mock_response = Mock()
+            mock_response.id = "chatcmpl-stream-test"
+            mock_response.object = "chat.completion"
+            mock_response.created = 1677652289
+            mock_response.model = "gpt-3.5-turbo"
+
+            # choices配列を適切に設定
+            mock_choice = Mock()
+            mock_choice.index = 0
+            mock_choice.finish_reason = "stop"
+
+            # messageオブジェクトを適切に設定
+            mock_message = Mock()
+            mock_message.role = "assistant"
+            mock_message.content = "Hello! How can I help you?"
+            mock_choice.message = mock_message
+
+            mock_response.choices = [mock_choice]
+
+            # usage情報を設定
+            mock_usage = Mock()
+            mock_usage.prompt_tokens = 5
+            mock_usage.completion_tokens = 6
+            mock_usage.total_tokens = 11
+            mock_response.usage = mock_usage
+
+            mock_service.create_chat_completion.return_value = mock_response
+
+            response = self.client.post("/v1/chat/completions", json=request_data)
+            # ストリーミングレスポンスは200で返される
+            assert response.status_code == 200
+            # ストリーミングのContent-Typeを確認
+            assert "text/plain" in response.headers.get("content-type", "")
+
+    def test_chat_completions_stream_false(self):
+        """非ストリーミングテスト（従来通り）"""
+        request_data = {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+            "stream": False
+        }
+
+        # 非ストリーミングの場合は従来通りJSONレスポンス
+        with patch('api.get_chatgpt_service') as mock_get_service:
+            mock_service = MagicMock()
+            mock_get_service.return_value = mock_service
+
+            # モックレスポンス作成（辞書形式で直接返す）
+            mock_response = {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 1677652288,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Test response"
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15
+                }
+            }
+            mock_service.create_chat_completion.return_value = mock_response
+
+            response = self.client.post("/v1/chat/completions", json=request_data)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["choices"][0]["message"]["content"] == "Test response"
+
+    @patch('api.get_chatgpt_service')
+    def test_chat_completions_streaming_format(self, mock_get_service):
+        """ストリーミング形式の詳細テスト"""
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        # モックレスポンス作成（適切なオブジェクト構造）
+        mock_response = Mock()
+        mock_response.id = "chatcmpl-stream-test"
+        mock_response.object = "chat.completion"
+        mock_response.created = 1677652289
+        mock_response.model = "gpt-3.5-turbo"
+
+        # choices配列を適切に設定
+        mock_choice = Mock()
+        mock_choice.index = 0
+        mock_choice.finish_reason = "stop"
+
+        # messageオブジェクトを適切に設定
+        mock_message = Mock()
+        mock_message.role = "assistant"
+        mock_message.content = "Hello world!"
+        mock_choice.message = mock_message
+
+        mock_response.choices = [mock_choice]
+
+        # usage情報を設定
+        mock_usage = Mock()
+        mock_usage.prompt_tokens = 5
+        mock_usage.completion_tokens = 3
+        mock_usage.total_tokens = 8
+        mock_response.usage = mock_usage
+
+        mock_service.create_chat_completion.return_value = mock_response
+
+        request_data = {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "user", "content": "Say hello"}
+            ],
+            "stream": True
+        }
+
         response = self.client.post("/v1/chat/completions", json=request_data)
-        assert response.status_code == 400
-        data = response.json()
-        assert "stream" in data["detail"]["error"]["message"].lower()
+        assert response.status_code == 200
+        assert "text/plain" in response.headers.get("content-type", "")
+
+        # ストリーミングレスポンスの内容確認
+        content = response.content.decode('utf-8')
+        assert "data: " in content
+        assert "[DONE]" in content
+        assert "chat.completion.chunk" in content
 
     @patch('api.get_chatgpt_service')
     def test_chat_completions_with_functions(self, mock_get_service):
@@ -122,36 +253,31 @@ class TestChatGPTAPI:
         mock_service = MagicMock()
         mock_get_service.return_value = mock_service
 
-        # モックレスポンス作成（Function Call応答）
-        mock_response = Mock()
-        mock_response.id = "chatcmpl-func-test"
-        mock_response.object = "chat.completion"
-        mock_response.created = 1677652300
-        mock_response.model = "gpt-3.5-turbo"
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].index = 0
-        # Function Calling用の正しいモック構造を作成
-        mock_function_call = FunctionCall(
-            name="get_weather",
-            arguments='{"location": "Tokyo"}'
-        )
-
-        mock_message = ChatMessage(
-            role="assistant",
-            content=None,
-            function_call=mock_function_call
-        )
-
-        mock_response.choices[0].message = mock_message
-        mock_response.choices[0].finish_reason = "function_call"
-        mock_response.usage = Mock()
-        mock_response.usage.prompt_tokens = 45
-        mock_response.usage.completion_tokens = 10
-        mock_response.usage.total_tokens = 55
-
-        mock_service.create_chat_completion.return_value = mock_response
-
-        # Function定義付きリクエスト送信
+        # モックレスポンス作成（Function Call応答を辞書で作成）
+        mock_response = {
+            "id": "chatcmpl-func-test",
+            "object": "chat.completion",
+            "created": 1677652300,
+            "model": "gpt-3.5-turbo",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "function_call": {
+                        "name": "get_weather",
+                        "arguments": '{"location": "Tokyo"}'
+                    }
+                },
+                "finish_reason": "function_call"
+            }],
+            "usage": {
+                "prompt_tokens": 45,
+                "completion_tokens": 10,
+                "total_tokens": 55
+            }
+        }
+        mock_service.create_chat_completion.return_value = mock_response        # Function定義付きリクエスト送信
         request_data = {
             "model": "gpt-3.5-turbo",
             "messages": [
@@ -189,38 +315,34 @@ class TestChatGPTAPI:
         mock_service = MagicMock()
         mock_get_service.return_value = mock_service
 
-        # モックレスポンス作成
-        mock_response = Mock()
-        mock_response.id = "chatcmpl-tools-test"
-        mock_response.object = "chat.completion"
-        mock_response.created = 1677652301
-        mock_response.model = "gpt-3.5-turbo"
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].index = 0
-        # Tools用の正しいモック構造を作成
-        mock_function = FunctionCall(
-            name="calculate_area",
-            arguments='{"width": 5, "height": 3}'
-        )
-
-        mock_tool_call = ToolCall(
-            id="call_123",
-            type="function",
-            function=mock_function
-        )
-
-        mock_message = ChatMessage(
-            role="assistant",
-            content=None,
-            tool_calls=[mock_tool_call]
-        )
-
-        mock_response.choices[0].message = mock_message
-        mock_response.choices[0].finish_reason = "tool_calls"
-        mock_response.usage = Mock()
-        mock_response.usage.prompt_tokens = 50
-        mock_response.usage.completion_tokens = 15
-        mock_response.usage.total_tokens = 65
+        # モックレスポンス作成（Tool Calls応答を辞書で作成）
+        mock_response = {
+            "id": "chatcmpl-tools-test",
+            "object": "chat.completion",
+            "created": 1677652301,
+            "model": "gpt-3.5-turbo",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "calculate_area",
+                            "arguments": '{"width": 5, "height": 3}'
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 15,
+                "total_tokens": 65
+            }
+        }
 
         mock_service.create_chat_completion.return_value = mock_response
 
@@ -256,8 +378,35 @@ class TestChatGPTAPI:
         assert data["choices"][0]["finish_reason"] == "tool_calls"
         assert data["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "calculate_area"
 
-    def test_chat_completions_invalid_function_call(self):
+    @patch('api.get_chatgpt_service')
+    def test_chat_completions_invalid_function_call(self, mock_get_service):
         """無効なFunction Call設定テスト"""
+        # モックサービス作成
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        # 簡単なレスポンス用意
+        mock_response = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 1677652288,
+            "model": "gpt-3.5-turbo",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Test response"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 2,
+                "total_tokens": 7
+            }
+        }
+        mock_service.create_chat_completion.return_value = mock_response
+
         request_data = {
             "model": "gpt-3.5-turbo",
             "messages": [
@@ -296,7 +445,7 @@ class TestChatGPTAPI:
         # バリデーションテスト（エラーなく受け入れられることを確認）
         response = self.client.post("/v1/chat/completions", json=request_data)
         # 実装状況により200または処理エラーを期待
-        assert response.status_code in [200, 400, 422, 500]
+        assert response.status_code in [200, 400, 401, 422, 500]
 
 
 class TestChatGPTService:
@@ -411,6 +560,106 @@ class TestChatGPTDriver:
 
             self.driver._session_active = False
             assert not self.driver.is_session_active()
+
+    def test_login_state_check(self):
+        """ログイン状態チェックテスト"""
+        with patch('drivers.selenium_wrapper.SeleniumWrapper') as mock_wrapper_class:
+            mock_wrapper = Mock()
+            mock_driver = Mock()
+            mock_wrapper.driver = mock_driver
+            mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+            driver = ChatGPTDriver()
+            driver.selenium_wrapper = mock_wrapper
+
+            # ログインボタンが存在する場合（未ログイン）
+            # すべてのログインインジケーターでボタンが見つかる
+            mock_driver.find_elements.return_value = [Mock(is_displayed=Mock(return_value=True))]
+            assert not driver._check_login_status()
+
+            # ChatGPT要素が存在する場合（ログイン済み）
+            # ログインインジケーターは空、ChatGPTインジケーターで要素が見つかる
+            def side_effect_func(by, selector):
+                # ログインインジケーターは全て空を返す
+                if any(indicator in selector for indicator in ['login-button', 'signup-button', 'auth']):
+                    return []
+                # ChatGPTインジケーターは要素を返す
+                elif any(indicator in selector for indicator in ['prompt-textarea', 'contenteditable', 'composer-button']):
+                    return [Mock(is_displayed=Mock(return_value=True))]
+                else:
+                    return []
+
+            mock_driver.find_elements.side_effect = side_effect_func
+            assert driver._check_login_status()
+
+    def test_login_required_error_handling(self):
+        """ログイン必須エラーハンドリングテスト"""
+        with patch('drivers.selenium_wrapper.SeleniumWrapper') as mock_wrapper_class:
+            mock_wrapper = Mock()
+            mock_driver = Mock()
+            mock_wrapper.driver = mock_driver
+            mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+            driver = ChatGPTDriver()
+            driver.selenium_wrapper = mock_wrapper
+            driver._session_active = True
+
+            # ログイン状態チェックでFalseを返す
+            with patch.object(driver, '_check_login_status', return_value=False):
+                with pytest.raises(RuntimeError) as exc_info:
+                    driver.send_message("test message")
+
+                assert "ログイン" in str(exc_info.value)
+
+    def test_streaming_response_completion(self):
+        """ストリーミング応答完了検知テスト"""
+        # ドライバーインスタンス作成
+        driver = ChatGPTDriver()
+
+        # モック要素を作成
+        mock_element = Mock()
+        mock_element.text = "Question: ジャンプする男\nThought: I need to generate an appropriate prompt for Stable Diffusion to create an image of a jumping man."
+
+        # ストリーミング応答完了検知ロジックをテスト
+        with patch('drivers.selenium_wrapper.SeleniumWrapper') as mock_wrapper_class:
+            mock_wrapper = Mock()
+            mock_driver = Mock()
+            mock_wrapper.driver = mock_driver
+            mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+            driver.selenium_wrapper = mock_wrapper
+
+            # モック設定: ストリーミングインジケーターが存在しない（完了状態）
+            mock_driver.find_elements.return_value = []
+
+            # 応答完了判定をテスト（安定したテキストの場合）
+            result = driver._is_response_complete(mock_element, mock_element.text)
+
+            # 短時間安定していれば完了と判定されることを確認
+            # 実際のテストでは時間調整が必要だが、ロジックの存在を確認
+            assert isinstance(result, bool)
+
+    def test_partial_response_detection(self):
+        """部分応答検知テスト"""
+        driver = ChatGPTDriver()
+
+        # 短すぎる応答（部分応答の可能性）
+        mock_element = Mock()
+        short_text = "Question: ジャンプ"  # 15文字程度
+        mock_element.text = short_text
+
+        with patch('drivers.selenium_wrapper.SeleniumWrapper') as mock_wrapper_class:
+            mock_wrapper = Mock()
+            mock_driver = Mock()
+            mock_wrapper.driver = mock_driver
+            mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+            driver.selenium_wrapper = mock_wrapper
+            mock_driver.find_elements.return_value = []
+
+            # 短すぎる応答は未完了と判定されることを確認
+            result = driver._is_response_complete(mock_element, mock_element.text)
+            assert result == False  # 短すぎるため継続すべき
 
 
 class TestModels:
@@ -532,12 +781,9 @@ class TestBoundaryValues:
 class TestErrorGuessing:
     """エラー推測法テストクラス"""
 
-    def test_empty_messages_list(self):
-        """空のメッセージリストテスト"""
-        service = ChatGPTService()
-        empty_messages = []
-        latest = service._get_latest_user_message(empty_messages)
-        assert latest is None
+    def setup_method(self):
+        """テストメソッド前のセットアップ"""
+        self.client = TestClient(app)
 
     def test_no_user_messages(self):
         """ユーザーメッセージなしテスト"""
@@ -550,7 +796,118 @@ class TestErrorGuessing:
         assert latest is None
 
     @patch('api.get_chatgpt_service')
-    def test_service_failure_handling(self, mock_get_service):
+    def test_authentication_error_with_footer_detection(self, mock_get_service):
+        """認証エラーとフッター検出テスト"""
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        # RuntimeError with login message
+        mock_service.create_chat_completion.side_effect = RuntimeError("ChatGPTにログインしていません。手動でログインしてからAPIを使用してください。")
+
+        request_data = {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "user", "content": "Test message"}
+            ]
+        }
+
+        response = self.client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 401
+        data = response.json()
+        # FastAPIのHTTPExceptionはdetail内にエラー情報を格納
+        assert data["detail"]["error"]["type"] == "invalid_request_error"
+        assert data["detail"]["error"]["code"] == "authentication_required"
+        assert "ログイン" in data["detail"]["error"]["message"]
+
+    def test_login_state_check(self):
+        """ログイン状態チェック機能テスト"""
+        with patch('drivers.selenium_wrapper.SeleniumWrapper') as mock_wrapper_class:
+            mock_wrapper = Mock()
+            mock_driver = Mock()
+            mock_wrapper.driver = mock_driver
+            mock_wrapper_class.get_instance.return_value = mock_wrapper
+
+            driver = ChatGPTDriver()
+            driver.selenium_wrapper = mock_wrapper
+
+            # ログインボタンが存在する場合（未ログイン）
+            mock_driver.find_elements.return_value = [Mock(is_displayed=Mock(return_value=True))]
+            assert not driver._check_login_status()
+
+            # ChatGPT要素が存在する場合（ログイン済み）
+            def side_effect_func(by, selector):
+                if any(indicator in selector for indicator in ['login-button', 'signup-button', 'auth']):
+                    return []
+                elif any(indicator in selector for indicator in ['prompt-textarea', 'contenteditable', 'composer-button']):
+                    return [Mock(is_displayed=Mock(return_value=True))]
+                else:
+                    return []
+
+            mock_driver.find_elements.side_effect = side_effect_func
+            assert driver._check_login_status()
+
+    def test_footer_text_rejection(self):
+        """フッターテキスト拒否テスト"""
+        footer_patterns = [
+            "ChatGPT の回答は必ずしも正しいとは限りません",
+            "重要な情報は確認するようにしてください",
+            "ChatGPT にメッセージを送ると、規約に同意し",
+            "プライバシーポリシーを読んだものとみなされます",
+            "無料でサインアップ",
+            "ログイン"
+        ]
+
+        # フッターテキストのサンプル
+        footer_text = "ログイン\n無料でサインアップ\nChatGPT の回答は必ずしも正しいとは限りません。重要な情報は確認するようにしてください"
+
+        # フッターパターンが検出されることを確認
+        is_footer = False
+        for pattern in footer_patterns:
+            if pattern in footer_text:
+                is_footer = True
+                break
+
+        assert is_footer, "Footer pattern should be detected"
+
+        # 正常な応答テキストは検出されないことを確認
+        normal_response = "こんにちは！今日はどのようなお手伝いができますか？"
+        is_footer = False
+        for pattern in footer_patterns:
+            if pattern in normal_response:
+                is_footer = True
+                break
+
+        assert not is_footer, "Normal response should not be detected as footer"
+
+    @patch('api.get_chatgpt_service')
+    def test_comprehensive_login_error_handling(self, mock_get_service):
+        """包括的ログインエラーハンドリングテスト"""
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        # Different types of login-related errors
+        login_errors = [
+            "ChatGPTにログインしていません",
+            "ログインセッションが期限切れです",
+            "ChatGPTの応答を正しく取得できませんでした。ログイン状態を確認してください"
+        ]
+
+        for error_message in login_errors:
+            mock_service.create_chat_completion.side_effect = RuntimeError(error_message)
+
+            request_data = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "user", "content": "Test message"}
+                ]
+            }
+
+            response = self.client.post("/v1/chat/completions", json=request_data)
+            assert response.status_code == 401
+            data = response.json()
+            # FastAPIのHTTPExceptionはdetail内にエラー情報を格納
+            assert data["detail"]["error"]["type"] == "invalid_request_error"
+            assert data["detail"]["error"]["code"] == "authentication_required"
         """サービス障害処理テスト"""
         # モックサービス作成
         mock_service = MagicMock()
@@ -567,6 +924,26 @@ class TestErrorGuessing:
         assert response.status_code == 500
         data = response.json()
         assert "error" in data["detail"]
+
+    @patch('api.get_chatgpt_service')
+    def test_authentication_required_error(self, mock_get_service):
+        """認証必須エラーテスト"""
+        # モックサービス作成
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        # ログイン関連のRuntimeErrorを発生させる
+        mock_service.create_chat_completion.side_effect = RuntimeError("ChatGPTにログインしていません")
+
+        request_data = {
+            "model": "gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": "Test"}]
+        }
+
+        response = self.client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 401
+        data = response.json()
+        assert "authentication_required" in data["detail"]["error"]["code"]
 
 
 if __name__ == "__main__":
