@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     profile_dir_path: str = ""  # 空の場合は一時ディレクトリを使用
     chrome_debug_port: str = ""  # 空の場合は自動選択
 
+    # 自動起動設定（新規追加）
+    auto_start_browser: bool = True  # ブラウザ自動起動
+    startup_timeout: int = 30  # 起動タイムアウト（秒）
+
+    # 入力処理最適化設定（新規追加）
+    input_cleanup_delay: float = 0.8    # clear()後の待機時間（秒）
+    safe_send_limit: int = 150          # 安全な単一送信文字数上限
+    init_timeout: int = 15              # 初期化タイムアウト（秒）
+    residual_cleanup: bool = True       # 残存データクリーンアップ有効/無効
+
     # ログ設定
     log_level: str = "INFO"
 
